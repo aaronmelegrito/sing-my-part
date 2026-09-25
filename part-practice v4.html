@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Part Practice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Literata:opsz,wght@7..72,500;7..72,700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.min.js"></script>
+<style>
+:root {
+  --paper: #F3F5F1; --surface: #FFFFFF; --ink: #1D2330; --muted: #596172; --line: #D6DAD0;
+  --accent: #6E1E3A; --accent-ink: #FFFFFF;
+  --sop: #BE3455; --alt: #B67A06; --ten: #17737F; --bas: #3C47A3;
+  --warn-bg: #FFF4DB; --warn-ink: #6B4A00; --err-bg: #FBE3E8; --err-ink: #7A1530;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #14171D; --surface: #1D212A; --ink: #ECEEF2; --muted: #A2A9B7; --line: #313745;
+    --accent: #D9829C; --accent-ink: #1A0D12;
+    --sop: #EC7493; --alt: #E3AE3F; --ten: #4DB6C2; --bas: #8C95EC;
+    --warn-bg: #3A2F14; --warn-ink: #F3D48A; --err-bg: #3D1822; --err-ink: #F6B2C2;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #14171D; --surface: #1D212A; --ink: #ECEEF2; --muted: #A2A9B7; --line: #313745;
+  --accent: #D9829C; --accent-ink: #1A0D12;
+  --sop: #EC7493; --alt: #E3AE3F; --ten: #4DB6C2; --bas: #8C95EC;
+  --warn-bg: #3A2F14; --warn-ink: #F3D48A; --err-bg: #3D1822; --err-ink: #F6B2C2;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 17px/1.55 "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+[hidden] { display: none !important; }
+.wrap { max-width: 760px; margin: 0 auto; padding: 28px 20px 64px; }
+h1, h2, h3 { font-family: Literata, Georgia, "Times New Roman", serif; font-weight: 700; line-height: 1.2; margin: 0; }
+h1 { font-size: 2.2rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.45rem; }
+h3 { font-size: 1.1rem; font-weight: 500; margin-bottom: 10px; }
+.lede { color: var(--muted); margin: 6px 0 0; max-width: 34em; }
+.voicebar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin: 18px 0 28px; max-width: 220px; }
+.voicebar span { flex: 1; }
+.voicebar span:nth-child(1) { background: var(--sop); } .voicebar span:nth-child(2) { background: var(--alt); }
+.voicebar span:nth-child(3) { background: var(--ten); } .voicebar span:nth-child(4) { background: var(--bas); }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px; margin-bottom: 18px; }
+.panel.dragging { border-color: var(--accent); border-style: dashed; }
+.hint { color: var(--muted); margin: 6px 0 16px; font-size: 0.95rem; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+.btn {
+  font: inherit; font-weight: 700; border-radius: 10px; padding: 12px 18px; min-height: 48px;
+  border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn:hover { border-color: var(--ink); }
+.btn.primary:hover { filter: brightness(1.08); border-color: var(--accent); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.status { margin: 14px 0 0; padding: 12px 14px; border-radius: 10px; font-size: 0.95rem; }
+.status.err { background: var(--err-bg); color: var(--err-ink); }
+.status.ok { background: transparent; color: var(--muted); padding: 0; }
+
+.scorehead { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+.meta { color: var(--muted); font-size: 0.95rem; }
+
+.parts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+@media (max-width: 560px) { .parts { grid-template-columns: repeat(2, 1fr); } }
+.part {
+  --c: var(--ink);
+  font: inherit; text-align: left; cursor: pointer; border-radius: 12px; padding: 14px 14px 12px;
+  border: 1.5px solid var(--line); border-left: 8px solid var(--c); background: var(--surface); color: var(--ink);
+  min-height: 84px;
+}
+.part .nm { font-family: Literata, Georgia, serif; font-size: 1.2rem; font-weight: 700; display: block; }
+.part .rg { font-size: 0.85rem; color: var(--muted); }
+.part[aria-pressed="true"] { background: var(--c); border-color: var(--c); color: #fff; }
+.part[aria-pressed="true"] .rg { color: rgba(255,255,255,0.85); }
+:root[data-theme="dark"] .part[aria-pressed="true"], :root[data-theme="dark"] .part[aria-pressed="true"] .rg { color: #111; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .part[aria-pressed="true"], :root:not([data-theme="light"]) .part[aria-pressed="true"] .rg { color: #111; }
+}
+.part[data-i="0"] { --c: var(--sop); } .part[data-i="1"] { --c: var(--alt); }
+.part[data-i="2"] { --c: var(--ten); } .part[data-i="3"] { --c: var(--bas); }
+
+.seg { display: flex; border: 1.5px solid var(--line); border-radius: 10px; overflow: hidden; margin-top: 12px; }
+.seg button { flex: 1; font: inherit; font-size: 0.95rem; padding: 10px 6px; min-height: 46px; border: 0; background: transparent; color: var(--ink); cursor: pointer; }
+.seg button + button { border-left: 1.5px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); font-weight: 700; }
+.seg button:disabled { color: var(--muted); cursor: not-allowed; }
+
+.transport { display: flex; align-items: center; gap: 16px; margin: 26px 0 8px; }
+.play {
+  width: 76px; height: 76px; flex: none; border-radius: 50%; border: 0; cursor: pointer;
+  background: var(--accent); color: var(--accent-ink); display: grid; place-items: center;
+}
+.play svg { width: 30px; height: 30px; }
+.stop { width: 48px; height: 48px; flex: none; border-radius: 50%; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; display: grid; place-items: center; }
+.stop svg { width: 18px; height: 18px; }
+.pos { flex: 1; min-width: 0; }
+.pos .where { font-family: Literata, Georgia, serif; font-size: 1.15rem; font-weight: 500; }
+.bar { position: relative; height: 14px; border-radius: 7px; background: var(--line); margin-top: 8px; cursor: pointer; touch-action: none; }
+.bar .fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 7px; background: var(--ink); }
+.bar .band { position: absolute; top: -4px; bottom: -4px; border: 2px solid var(--accent); border-radius: 8px; pointer-events: none; }
+.small { font-size: 0.85rem; color: var(--muted); margin: 6px 0 0; }
+
+.tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 22px; }
+@media (max-width: 680px) { .tools { grid-template-columns: 1fr; } }
+.tool { border: 1.5px solid var(--line); border-radius: 12px; padding: 14px; }
+.tool h3 { margin-bottom: 4px; }
+.tool .val { font-weight: 700; }
+.tool .sub { color: var(--muted); font-size: 0.88rem; }
+input[type="range"] { width: 100%; accent-color: var(--accent); height: 32px; }
+.stepper { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.stepper button { width: 46px; height: 46px; font: inherit; font-size: 1.4rem; font-weight: 700; border-radius: 10px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.stepper .val { flex: 1; text-align: center; }
+.check { display: flex; align-items: center; gap: 10px; min-height: 40px; cursor: pointer; }
+.check input { width: 22px; height: 22px; accent-color: var(--accent); }
+.loopsel { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 0.95rem; }
+select { font: inherit; padding: 8px 6px; border-radius: 8px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); min-height: 42px; }
+
+details.mixer { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+details.mixer summary { cursor: pointer; font-weight: 700; min-height: 40px; display: flex; align-items: center; }
+.mixrow { display: grid; grid-template-columns: 5.5rem 1fr auto auto; gap: 10px; align-items: center; padding: 6px 0; }
+.mixrow .nm { font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.mixrow .dot { width: 12px; height: 12px; border-radius: 50%; }
+.tog { font: inherit; font-size: 0.85rem; font-weight: 700; min-width: 44px; min-height: 40px; border-radius: 8px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.tog[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+.layout { border: 1.5px solid var(--line); border-radius: 12px; padding: 4px 14px; margin-bottom: 20px; }
+.layout[open] { padding-bottom: 14px; }
+.layout summary { cursor: pointer; font-weight: 700; min-height: 44px; display: flex; align-items: center; }
+.layrow { display: grid; grid-template-columns: 5.5rem 1fr; gap: 10px; align-items: center; margin-top: 10px; }
+.layrow label { font-weight: 700; }
+.layrow select { width: 100%; min-width: 0; }
+.save { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 16px; }
+.save h3 { margin-bottom: 2px; }
+.savegrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 10px; }
+@media (max-width: 680px) { .savegrid { grid-template-columns: repeat(2, 1fr); } }
+.savebtn { font: inherit; font-weight: 700; font-size: 0.95rem; min-height: 48px; padding: 8px 10px; border-radius: 10px; cursor: pointer;
+  border: 1.5px solid var(--line); border-left: 6px solid var(--c, var(--ink)); background: var(--surface); color: var(--ink); text-align: left; }
+.savebtn:disabled { opacity: 0.55; cursor: progress; }
+.savebtn[data-i="0"] { --c: var(--sop); } .savebtn[data-i="1"] { --c: var(--alt); }
+.savebtn[data-i="2"] { --c: var(--ten); } .savebtn[data-i="3"] { --c: var(--bas); }
+.warn { background: var(--warn-bg); color: var(--warn-ink); border-radius: 10px; padding: 12px 14px; margin-top: 18px; font-size: 0.95rem; }
+footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
+@media (prefers-reduced-motion: no-preference) { .bar .fill { transition: width 0.08s linear; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Part Practice</h1>
+    <p class="lede">Load a four-part choir score, pick your voice part, and practice it at your own speed.</p>
+    <div class="voicebar" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+  </header>
+
+  <section class="panel" id="loadPanel">
+    <h2>Load a score</h2>
+    <p class="hint">Use a MusicXML file (.musicxml, .xml or .mxl). MuseScore and most notation apps can export one. You can also drag a file onto this box.</p>
+    <div class="row">
+      <label class="btn primary" for="file" tabindex="0" id="fileLabel">Choose a file</label>
+      <input type="file" id="file" accept=".musicxml,.xml,.mxl,.pdf,.mid,.midi" hidden>
+      <button class="btn" id="demoBtn" type="button">Try the demo</button>
+    </div>
+    <p id="status" class="status" role="status" hidden></p>
+  </section>
+
+  <section class="panel" id="practice" hidden>
+    <div class="scorehead">
+      <h2 id="title">Score</h2>
+      <span class="meta" id="meta"></span>
+    </div>
+
+    <details class="layout" id="layout">
+      <summary>Which staff is which part</summary>
+      <p class="small" id="layoutNote"></p>
+      <div id="layoutRows"></div>
+    </details>
+
+    <h3>Parts to practice</h3>
+    <p class="small" style="margin:-6px 0 10px">Tap one or more parts. Tap again to unselect.</p>
+    <div class="parts" id="parts"></div>
+    <div class="seg" id="modes" role="group" aria-label="What to hear">
+      <button type="button" data-mode="solo">Only these parts</button>
+      <button type="button" data-mode="focus">These parts loud</button>
+      <button type="button" data-mode="all">Everyone equal</button>
+    </div>
+
+    <div class="transport">
+      <button class="play" id="playBtn" type="button" aria-label="Play"></button>
+      <button class="stop" id="stopBtn" type="button" aria-label="Back to start">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+      </button>
+      <div class="pos">
+        <div class="where" id="where">Measure 1</div>
+        <div class="bar" id="bar" role="slider" tabindex="0" aria-label="Position in the score" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="band" id="band" hidden></div>
+          <div class="fill" id="fill"></div>
+        </div>
+      </div>
+    </div>
+    <p class="small">No sound on an iPhone? Turn off silent mode.</p>
+
+    <div class="tools">
+      <div class="tool">
+        <h3>Speed</h3>
+        <input type="range" id="speed" min="40" max="130" step="5" value="100" aria-label="Speed">
+        <div><span class="val" id="speedVal">100%</span> <span class="sub" id="bpmVal"></span></div>
+      </div>
+      <div class="tool">
+        <h3>Key</h3>
+        <div class="stepper">
+          <button type="button" id="tDown" aria-label="Lower by a half step">−</button>
+          <div class="val"><div id="tVal">Original key</div><div class="sub" id="keyVal"></div></div>
+          <button type="button" id="tUp" aria-label="Raise by a half step">+</button>
+        </div>
+      </div>
+      <div class="tool">
+        <h3>Repeat</h3>
+        <label class="check"><input type="checkbox" id="loopOn"> Repeat a section</label>
+        <div class="loopsel">
+          <label for="loopFrom">From</label><select id="loopFrom"></select>
+          <label for="loopTo">to</label><select id="loopTo"></select>
+        </div>
+      </div>
+    </div>
+
+    <details class="mixer">
+      <summary>Adjust each part</summary>
+      <div id="mixer"></div>
+    </details>
+
+    <div class="save">
+      <h3>Save as MP4</h3>
+      <p class="small" style="margin-top:0">Saves at your current speed and key.</p>
+      <div class="savegrid" id="saveBtns">
+        <button type="button" class="savebtn" data-i="0">Soprano</button>
+        <button type="button" class="savebtn" data-i="1">Alto</button>
+        <button type="button" class="savebtn" data-i="2">Tenor</button>
+        <button type="button" class="savebtn" data-i="3">Bass</button>
+        <button type="button" class="savebtn" data-i="mix">What I'm hearing</button>
+      </div>
+      <p class="small" id="saveStatus" role="status"></p>
+    </div>
+
+    <div id="warnings"></div>
+  </section>
+
+  <footer>On a computer, the space bar plays and pauses. Scores stay on your device; nothing is uploaded.</footer>
+</div>
+
+<script>
+(() => {
+  class UserError extends Error {}
+  const $ = (s) => document.querySelector(s);
+  const NAMES = ['Soprano', 'Alto', 'Tenor', 'Bass'];
+  const PC = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
+  const STEP = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  const noteName = (m) => PC[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+  const child = (el, name) => { for (const c of el.children) if (c.nodeName === name) return c; return null; };
+  const T = Tone.Transport;
+  const PPQ = T.PPQ;
+
+  const state = {
+    sel: [false, false, false, false], mode: 'solo', vol: [80, 80, 80, 80], mute: [false, false, false, false],
+    solo: [false, false, false, false], speed: 100, transpose: 0, loop: false, loopFrom: 0, loopTo: 0,
+  };
+  let score = null, channels = [], synths = [], tparts = [];
+  let playing = false; // our own flag: the transport only reports 'started' once its scheduled start time arrives
+
+  /* ---------- Reading MusicXML ---------- */
+  function parseMusicXML(text) {
+    const doc = new DOMParser().parseFromString(text, 'application/xml');
+    if (doc.getElementsByTagName('parsererror').length) throw new UserError("This file isn't valid MusicXML. Export it again from your notation app.");
+    const root = doc.documentElement;
+    if (root.nodeName === 'score-timewise') throw new UserError('This file uses an unusual MusicXML layout. Open it in MuseScore and export it again as MusicXML.');
+    if (root.nodeName !== 'score-partwise') throw new UserError("This file doesn't contain a MusicXML score.");
+
+    const titleEl = root.querySelector('work > work-title') || root.querySelector('movement-title');
+    const notes = []; const bad = new Set();
+    let measures = null, bpm = null, keySig = null;
+    const partNames = {};
+    root.querySelectorAll('part-list > score-part').forEach((sp) => { partNames[sp.getAttribute('id')] = (child(sp, 'part-name')?.textContent || '').trim(); });
+    const staffInfo = {};
+    const info = (k) => (staffInfo[k] ||= { name: '', clef: null, lyrics: 0 });
+
+    [...root.children].filter((e) => e.nodeName === 'part').forEach((part, pi) => {
+      let div = 1, pos = 0, bar = 4;
+      const partName = partNames[part.getAttribute('id')] || '';
+      info(pi * 100 + 1).name = partName;
+      const ms = [];
+      const mEls = [...part.children].filter((e) => e.nodeName === 'measure');
+      mEls.forEach((m, mi) => {
+        const mStart = pos; let cur = pos, maxPos = pos, lastStart = pos;
+        for (const el of m.children) {
+          const tag = el.nodeName;
+          if (tag === 'attributes') {
+            const d = child(el, 'divisions'); if (d) div = parseFloat(d.textContent) || div;
+            const t = child(el, 'time');
+            if (t) { const b = parseFloat(child(t, 'beats')?.textContent), bt = parseFloat(child(t, 'beat-type')?.textContent); if (b && bt) bar = (b * 4) / bt; }
+            const k = child(el, 'key');
+            for (const c of el.children) {
+              if (c.nodeName !== 'clef') continue;
+              const st = info(pi * 100 + parseInt(c.getAttribute('number') || '1', 10));
+              st.name = partName;
+              if (!st.clef) st.clef = { sign: (child(c, 'sign')?.textContent || '').trim(), oct: parseInt(child(c, 'clef-octave-change')?.textContent || '0', 10) };
+            }
+            if (k && !keySig && child(k, 'fifths')) keySig = { fifths: parseInt(child(k, 'fifths').textContent, 10), mode: (child(k, 'mode')?.textContent || 'major').trim() };
+          } else if (tag === 'direction' || tag === 'sound') {
+            if (bpm == null) {
+              const s = tag === 'sound' ? el : el.querySelector('sound');
+              const tv = s && s.getAttribute('tempo');
+              if (tv) bpm = parseFloat(tv);
+              else { const pm = el.querySelector('per-minute'); if (pm) bpm = parseFloat(pm.textContent); }
+            }
+          } else if (tag === 'backup') {
+            cur -= (parseFloat(child(el, 'duration')?.textContent) || 0) / div;
+          } else if (tag === 'forward') {
+            cur += (parseFloat(child(el, 'duration')?.textContent) || 0) / div; maxPos = Math.max(maxPos, cur);
+          } else if (tag === 'note') {
+            if (child(el, 'grace')) continue;
+            const d = (parseFloat(child(el, 'duration')?.textContent) || 0) / div;
+            const isChord = !!child(el, 'chord');
+            const start = isChord ? lastStart : cur;
+            if (!isChord) { lastStart = cur; cur += d; maxPos = Math.max(maxPos, cur); }
+            const p = child(el, 'pitch');
+            if (!p || !child(p, 'step') || !child(p, 'octave')) continue;
+            const midi = (parseInt(child(p, 'octave').textContent, 10) + 1) * 12
+              + STEP[child(p, 'step').textContent.trim()] + Math.round(parseFloat(child(p, 'alter')?.textContent || '0'));
+            if (!Number.isFinite(midi) || d <= 0) continue;
+            const staffNo = parseInt(child(el, 'staff')?.textContent || '1', 10);
+            const si = info(pi * 100 + staffNo); si.name = partName;
+            if (child(el, 'lyric')) si.lyrics++;
+            const ties = [...el.children].filter((c) => c.nodeName === 'tie').map((c) => c.getAttribute('type'));
+            notes.push({
+              pi, staffNo,
+              voice: (child(el, 'voice')?.textContent || '1').trim(), stem: (child(el, 'stem')?.textContent || '').trim(),
+              midi, start, dur: d, measure: mi, tieStop: ties.includes('stop'),
+            });
+          }
+        }
+        ms.push({ number: m.getAttribute('number') || String(mi + 1), start: mStart, len: maxPos - mStart });
+        if (mi > 0 && mi < mEls.length - 1 && Math.abs(maxPos - mStart - bar) > 0.01) bad.add(mi);
+        pos = maxPos;
+      });
+      if (!measures) measures = ms;
+    });
+
+    if (!notes.length) throw new UserError('No notes were found in this file.');
+    return { title: titleEl ? titleEl.textContent.trim() : '', notes, measures, bpm: bpm || 90, keySig, staffInfo, bad: [...bad].sort((a, b) => a - b) };
+  }
+
+  /* ---------- Splitting into S, A, T, B ---------- */
+  function groupBy(arr, fn) { const m = new Map(); for (const x of arr) { const k = fn(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); } return m; }
+
+  // One note per start time: the highest for an upper voice, the lowest for a lower voice.
+  function pickByStart(ns, which) {
+    return [...groupBy(ns, (n) => n.start.toFixed(4)).values()].map((g) =>
+      g.reduce((a, b) => (which === 'upper' ? (b.midi > a.midi ? b : a) : (b.midi < a.midi ? b : a))));
+  }
+
+  // Stem direction decides first; average pitch breaks ties.
+  function voiceRank(ns) {
+    let stems = 0, sum = 0;
+    for (const n of ns) { stems += n.stem === 'up' ? 1 : n.stem === 'down' ? -1 : 0; sum += n.midi; }
+    return stems * 1000 + sum / ns.length;
+  }
+
+  function splitStaff(ns) {
+    const up = [], low = [];
+    for (const mNotes of groupBy(ns, (n) => n.measure).values()) {
+      const voices = groupBy(mNotes, (n) => n.voice);
+      if (voices.size >= 2) {
+        const ranked = [...voices.values()].sort((a, b) => voiceRank(b) - voiceRank(a));
+        up.push(...pickByStart(ranked[0], 'upper'));
+        low.push(...pickByStart(ranked[ranked.length - 1], 'lower'));
+      } else {
+        // One voice: chords split top/bottom; a single note is a unison and goes to both.
+        up.push(...pickByStart(mNotes, 'upper'));
+        low.push(...pickByStart(mNotes, 'lower'));
+      }
+    }
+    return [up, low];
+  }
+
+  function mergeTies(ns) {
+    const sorted = [...ns].sort((a, b) => a.start - b.start || a.midi - b.midi);
+    const out = [];
+    for (const n of sorted) {
+      if (n.tieStop) {
+        let prev = null;
+        for (let i = out.length - 1; i >= 0; i--) {
+          if (out[i].midi === n.midi && Math.abs(out[i].start + out[i].dur - n.start) < 1e-3) { prev = out[i]; break; }
+        }
+        if (prev) { prev.dur += n.dur; continue; }
+      }
+      out.push({ midi: n.midi, start: n.start, dur: n.dur, measure: n.measure });
+    }
+    return out;
+  }
+
+  // Describe every staff that has notes, and pre-split it into top and bottom lines.
+  function analyzeStaves(parsed) {
+    const byStaff = groupBy(parsed.notes, (n) => n.pi * 100 + n.staffNo);
+    return [...byStaff.keys()].sort((a, b) => a - b).map((k, idx) => {
+      const ns = byStaff.get(k);
+      const inf = parsed.staffInfo[k] || {};
+      const onsets = [...groupBy(ns, (n) => n.start.toFixed(4)).values()];
+      const multi = onsets.filter((g) => g.length >= 2).length / onsets.length;
+      const big = onsets.filter((g) => g.length >= 3).length / onsets.length;
+      const voices = new Set(ns.map((n) => n.voice)).size;
+      const [u, l] = splitStaff(ns);
+      const mids = ns.map((n) => n.midi);
+      return {
+        idx, name: inf.name || '', clef: inf.clef, lyrics: inf.lyrics || 0,
+        twoVoices: voices >= 2 || multi > 0.1,
+        pianoLike: /piano|organ|keyboard|keys|accomp|pno|pf\.?$/i.test(inf.name || '') || big > 0.1,
+        lo: Math.min(...mids), hi: Math.max(...mids),
+        upper: mergeTies(u), lower: mergeTies(l),
+      };
+    });
+  }
+
+  // Best guess at which staff (and which line in it) is S, A, T and B.
+  function guessMapping(staves) {
+    const one = (s) => ({ staff: s.idx, which: 'upper' });
+    const named = [/sop/i, /alt/i, /ten/i, /bass|bas\b|bar/i].map((re) => staves.find((s) => re.test(s.name)));
+    if (named.every(Boolean)) return named.map(one);
+
+    let cand = staves.filter((s) => !s.pianoLike);
+    if (cand.length < 2) cand = staves;
+    const withLyrics = cand.filter((s) => s.lyrics > 0);
+    if (cand.length > 4 && (withLyrics.length === 4 || withLyrics.length === 2)) cand = withLyrics;
+
+    const [c0, c1, c2, c3] = cand;
+    if (cand.length >= 4 && ![c0, c1, c2, c3].some((s) => s.twoVoices)) return [c0, c1, c2, c3].map(one);
+    if (cand.length >= 3 && c0.twoVoices && !c1.twoVoices) return [one(c0), { staff: c0.idx, which: 'lower' }, one(c1), one(c2)];
+    if (cand.length >= 2 && (c0.twoVoices || c1.twoVoices || cand.length < 4)) {
+      return [one(c0), { staff: c0.idx, which: 'lower' }, one(c1), { staff: c1.idx, which: 'lower' }];
+    }
+    if (cand.length >= 4) return [c0, c1, c2, c3].map(one);
+    return [one(c0), { staff: c0.idx, which: 'lower' }, one(c0), { staff: c0.idx, which: 'lower' }];
+  }
+
+  function applyMapping() {
+    score.parts = score.mapping.map((m) => score.staves[m.staff][m.which]);
+    const last = score.measures[score.measures.length - 1];
+    let total = last.start + last.len;
+    for (const p of score.parts) for (const n of p) total = Math.max(total, n.start + n.dur);
+    score.total = total;
+  }
+
+  function clefLabel(c) {
+    if (!c) return '';
+    if (c.sign === 'G') return c.oct === -1 ? 'treble clef (tenor)' : 'treble clef';
+    if (c.sign === 'F') return 'bass clef';
+    if (c.sign === 'C') return 'C clef';
+    return '';
+  }
+
+  function staffLabel(st) {
+    const bits = [`Staff ${st.idx + 1}`];
+    if (st.name) bits.push(`“${st.name}”`);
+    const cl = clefLabel(st.clef); if (cl) bits.push(cl);
+    bits.push(`${noteName(st.lo)} to ${noteName(st.hi)}`);
+    let label = bits.join(', ');
+    if (st.pianoLike) label += ' (looks like accompaniment)';
+    return label;
+  }
+
+  function renderLayout() {
+    const opts = score.staves.flatMap((st) => (st.twoVoices
+      ? [[`${st.idx}:upper`, `${staffLabel(st)}, top notes`], [`${st.idx}:lower`, `${staffLabel(st)}, bottom notes`]]
+      : [[`${st.idx}:upper`, staffLabel(st)]]));
+    $('#layoutRows').innerHTML = NAMES.map((n, i) => {
+      const m = score.mapping[i];
+      const cur = `${m.staff}:${score.staves[m.staff].twoVoices ? m.which : 'upper'}`;
+      return `<div class="layrow"><label for="map${i}">${n}</label><select id="map${i}" data-part="${i}">${opts.map(([v, t]) => `<option value="${v}"${v === cur ? ' selected' : ''}>${t}</option>`).join('')}</select></div>`;
+    }).join('');
+    const unusual = score.staves.length !== 2 && score.staves.length !== 4;
+    $('#layoutNote').textContent = unusual
+      ? `This score has ${score.staves.length} staves, so we guessed which ones are the voices. Play each part to check it, and change any that sound wrong.`
+      : 'Change these if a part is playing the wrong notes.';
+    $('#layout').open = unusual;
+  }
+
+  /* ---------- Loading ---------- */
+  async function readFile(file) {
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.pdf')) throw new UserError("PDFs can't be read here yet. Run the score-reading script first and load the .mxl file it creates, or open the score in MuseScore and export it as MusicXML.");
+    if (name.endsWith('.mid') || name.endsWith('.midi')) throw new UserError("MIDI files aren't supported yet. Export the score as MusicXML instead.");
+    if (name.endsWith('.mxl')) {
+      let zip;
+      try { zip = await JSZip.loadAsync(file); } catch { throw new UserError("This .mxl file couldn't be opened. Export it again from your notation app."); }
+      let path = null;
+      const c = zip.file('META-INF/container.xml');
+      if (c) path = new DOMParser().parseFromString(await c.async('string'), 'application/xml').querySelector('rootfile')?.getAttribute('full-path');
+      if (!path || !zip.file(path)) path = Object.keys(zip.files).find((p) => !p.startsWith('META-INF') && /\.(xml|musicxml)$/i.test(p));
+      if (!path) throw new UserError("This .mxl file doesn't contain a score.");
+      return zip.file(path).async('string');
+    }
+    return file.text();
+  }
+
+  function showStatus(msg, kind) {
+    const el = $('#status');
+    if (!msg) { el.hidden = true; return; }
+    el.hidden = false; el.textContent = msg; el.className = 'status ' + kind;
+  }
+
+  function load(text, fallbackTitle) {
+    const parsed = parseMusicXML(text);
+    const staves = analyzeStaves(parsed);
+    score = { ...parsed, staves, mapping: guessMapping(staves), title: parsed.title || fallbackTitle };
+    applyMapping();
+    state.loopFrom = 0; state.loopTo = parsed.measures.length - 1; state.loop = false; state.transpose = 0;
+    buildAudio();
+    renderAll();
+    $('#practice').hidden = false;
+    showStatus(`Loaded “${score.title}”.`, 'ok');
+    if (window.matchMedia('(max-width: 680px)').matches) $('#practice').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  async function handleFile(file) {
+    if (!file) return;
+    try {
+      showStatus('Reading the score…', 'ok');
+      load(await readFile(file), file.name.replace(/\.[^.]+$/, ''));
+    } catch (e) {
+      console.error(e);
+      showStatus(e instanceof UserError ? e.message : "This score couldn't be read. Check that it's a MusicXML export of a four-part choir score.", 'err');
+    }
+  }
+
+  /* ---------- Audio ---------- */
+  function releaseAll() { synths.forEach((s) => s.releaseAll()); }
+
+  function teardown() {
+    T.stop(); T.cancel(); T.loop = false; playing = false;
+    tparts.forEach((p) => p.dispose()); synths.forEach((s) => s.dispose()); channels.forEach((c) => c.dispose());
+    tparts = []; synths = []; channels = [];
+  }
+
+  function buildAudio() {
+    teardown();
+    channels = NAMES.map(() => new Tone.Channel().toDestination());
+    synths = channels.map((ch) => {
+      const s = new Tone.PolySynth(Tone.Synth, SYNTH_OPTS);
+      s.volume.value = -10; s.connect(ch); return s;
+    });
+    tparts = score.parts.map((ns, i) => {
+      const p = new Tone.Part((time, ev) => {
+        const secs = (ev.dur * 60) / T.bpm.value * 0.94;
+        synths[i].triggerAttackRelease(Tone.Frequency(ev.midi + state.transpose, 'midi').toFrequency(), secs, time);
+      }, ns.map((n) => ({ time: `${Math.round(n.start * PPQ)}i`, midi: n.midi, dur: n.dur })));
+      p.start(0); return p;
+    });
+    applySpeed(); applyPreset(); applyLoop();
+  }
+
+  function applySpeed() {
+    if (!score) return;
+    T.bpm.value = (score.bpm * state.speed) / 100;
+    $('#speedVal').textContent = `${state.speed}%`;
+    $('#bpmVal').textContent = `${Math.round(T.bpm.value)} beats a minute`;
+  }
+
+  function applyMix() {
+    channels.forEach((ch, i) => {
+      const v = state.vol[i];
+      ch.mute = state.mute[i] || v === 0;
+      ch.volume.value = 20 * Math.log10(Math.max(v, 1) / 100);
+      ch.solo = state.solo[i];
+    });
+    renderMixer(); renderModes();
+  }
+
+  const anySel = () => state.sel.some(Boolean);
+  function presetVolumes() {
+    const mode = anySel() ? state.mode : 'all';
+    return NAMES.map((_, i) => (mode === 'all' ? 80 : state.sel[i] ? 100 : mode === 'solo' ? 0 : 25));
+  }
+
+  function applyPreset() {
+    state.solo = [false, false, false, false]; state.mute = [false, false, false, false];
+    state.vol = presetVolumes();
+    applyMix();
+  }
+
+  function loopTicks() {
+    const a = score.measures[state.loopFrom], b = score.measures[state.loopTo];
+    return [Math.round(a.start * PPQ), Math.round((b.start + b.len) * PPQ)];
+  }
+
+  function applyLoop() {
+    if (!score) return;
+    if (state.loopTo < state.loopFrom) state.loopTo = state.loopFrom;
+    const [s, e] = loopTicks();
+    const on = state.loop && e > s;
+    T.loop = on;
+    if (on) {
+      T.loopStart = `${s}i`; T.loopEnd = `${e}i`;
+      if (T.ticks < s || T.ticks >= e) seek(s);
+    }
+    const band = $('#band');
+    band.hidden = !on;
+    if (on) { band.style.left = `${(s / (score.total * PPQ)) * 100}%`; band.style.width = `${((e - s) / (score.total * PPQ)) * 100}%`; }
+    $('#loopFrom').value = state.loopFrom; $('#loopTo').value = state.loopTo;
+  }
+
+  function seek(ticks) {
+    releaseAll();
+    if (playing) { T.pause(); T.start(Tone.now() + 0.05, `${ticks}i`); }
+    else T.ticks = ticks;
+  }
+
+  async function togglePlay() {
+    if (!score) return;
+    await Tone.start();
+    if (playing) { T.pause(); releaseAll(); playing = false; }
+    else {
+      let ticks = T.ticks;
+      if (!state.loop && ticks >= Math.round(score.total * PPQ)) ticks = 0;
+      if (state.loop) { const [s, e] = loopTicks(); if (ticks < s || ticks >= e) ticks = s; }
+      T.start(Tone.now() + 0.05, `${ticks}i`);
+      playing = true;
+    }
+    renderPlay();
+  }
+
+  function stopAll() {
+    T.stop(); releaseAll(); playing = false;
+    if (state.loop) T.ticks = loopTicks()[0];
+    renderPlay();
+  }
+
+  /* ---------- Saving MP4 ---------- */
+  const SYNTH_OPTS = { oscillator: { type: 'triangle' }, envelope: { attack: 0.02, decay: 0.15, sustain: 0.6, release: 0.35 } };
+  const SR = 48000;
+
+  async function renderAudio(gains) {
+    const spq = 60 / ((score.bpm * state.speed) / 100);
+    const length = score.total * spq + 1.5;
+    const tb = await Tone.Offline(() => {
+      score.parts.forEach((ns, i) => {
+        if (!gains[i]) return;
+        const g = new Tone.Gain(gains[i]).toDestination();
+        const s = new Tone.PolySynth(Tone.Synth, SYNTH_OPTS);
+        s.volume.value = -10; s.connect(g);
+        for (const n of ns) {
+          s.triggerAttackRelease(Tone.Frequency(n.midi + state.transpose, 'midi').toFrequency(), n.dur * spq * 0.94, n.start * spq + 0.05);
+        }
+      });
+    }, length, 2, SR);
+    const ab = tb.get();
+    let peak = 0;
+    for (let c = 0; c < ab.numberOfChannels; c++) for (const v of ab.getChannelData(c)) peak = Math.max(peak, Math.abs(v));
+    if (peak > 0) { const k = 0.89 / peak; for (let c = 0; c < ab.numberOfChannels; c++) { const d = ab.getChannelData(c); for (let j = 0; j < d.length; j++) d[j] *= k; } }
+    return ab;
+  }
+
+  async function encodeMp4(ab) {
+    if (!('AudioEncoder' in window) || !window.Mp4Muxer) throw new UserError('This browser can’t create MP4 files. Use Chrome or Edge on a computer, or a recent Safari.');
+    const sr = ab.sampleRate, ch = ab.numberOfChannels, bitrate = 160000;
+    let codec = null;
+    for (const [enc, mux] of [['mp4a.40.2', 'aac'], ['opus', 'opus']]) {
+      try { const r = await AudioEncoder.isConfigSupported({ codec: enc, sampleRate: sr, numberOfChannels: ch, bitrate }); if (r.supported) { codec = { enc, mux }; break; } } catch {}
+    }
+    if (!codec) throw new UserError('This browser can’t create MP4 audio. Use Chrome or Edge on a computer.');
+    const muxer = new Mp4Muxer.Muxer({ target: new Mp4Muxer.ArrayBufferTarget(), audio: { codec: codec.mux, numberOfChannels: ch, sampleRate: sr }, fastStart: 'in-memory' });
+    let failure = null;
+    const encoder = new AudioEncoder({ output: (chunk, meta) => muxer.addAudioChunk(chunk, meta), error: (e) => { failure = e; } });
+    encoder.configure({ codec: codec.enc, sampleRate: sr, numberOfChannels: ch, bitrate });
+    const chans = Array.from({ length: ch }, (_, c) => ab.getChannelData(c));
+    for (let off = 0; off < ab.length; off += sr) {
+      const n = Math.min(sr, ab.length - off);
+      const data = new Float32Array(n * ch);
+      for (let c = 0; c < ch; c++) data.set(chans[c].subarray(off, off + n), c * n);
+      const ad = new AudioData({ format: 'f32-planar', sampleRate: sr, numberOfFrames: n, numberOfChannels: ch, timestamp: Math.round((off / sr) * 1e6), data });
+      encoder.encode(ad); ad.close();
+    }
+    await encoder.flush(); encoder.close();
+    if (failure) throw failure;
+    muxer.finalize();
+    return new Blob([muxer.target.buffer], { type: 'audio/mp4' });
+  }
+
+  let downloadsP = null;
+  function getDownloads() {
+    if (!window.claude || typeof window.claude.use !== 'function') return Promise.resolve(null);
+    if (!downloadsP) downloadsP = window.claude.use('downloads').catch(() => null);
+    return downloadsP;
+  }
+  getDownloads();
+
+  async function saveFile(filename, blob) {
+    const d = await getDownloads();
+    if (d) {
+      try { await d.save({ filename, data: blob }); return 'saved'; }
+      catch (e) {
+        if (e && e.code === 'declined') return 'declined';
+        if (e && e.code === 'rate_limited') throw new UserError('A save is already waiting for your answer. Finish that one first.');
+        throw new UserError('Saving files isn’t available here. Download the website file and open it on your computer instead.');
+      }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 20000);
+    return 'saved';
+  }
+
+  function fileName(label) {
+    const title = (score.title || 'Score').replace(/[\\/:*?"<>|]+/g, ' ').trim();
+    const extras = [];
+    if (state.speed !== 100) extras.push(`${state.speed}% speed`);
+    if (state.transpose) extras.push(`${state.transpose > 0 ? 'up' : 'down'} ${Math.abs(state.transpose)}`);
+    return `${title} - ${label}${extras.length ? ` (${extras.join(', ')})` : ''}.mp4`;
+  }
+
+  async function saveMp4(which) {
+    if (!score) return;
+    let gains, label;
+    if (which === 'mix') {
+      const anySolo = state.solo.some(Boolean);
+      gains = NAMES.map((_, i) => (state.mute[i] || (anySolo && !state.solo[i]) ? 0 : state.vol[i] / 100));
+      const chosen = NAMES.filter((_, i) => state.sel[i]);
+      label = chosen.length && chosen.length < 4 ? `${chosen.join(' + ')} practice mix` : 'Full mix';
+      if (!gains.some((g) => g > 0)) { $('#saveStatus').textContent = 'Every part is muted. Turn at least one part up first.'; return; }
+    } else {
+      const i = +which;
+      if (!score.parts[i].length) { $('#saveStatus').textContent = `The ${NAMES[i]} part has no notes to save.`; return; }
+      gains = NAMES.map((_, j) => (j === i ? 1 : 0));
+      label = NAMES[i];
+    }
+    const btns = document.querySelectorAll('.savebtn');
+    btns.forEach((b) => { b.disabled = true; });
+    const name = fileName(label);
+    try {
+      $('#saveStatus').textContent = `Making “${name}”…`;
+      const blob = await encodeMp4(await renderAudio(gains));
+      const r = await saveFile(name, blob);
+      $('#saveStatus').textContent = r === 'declined' ? 'Save cancelled.' : `Saved “${name}”.`;
+    } catch (e) {
+      console.error(e);
+      $('#saveStatus').textContent = e instanceof UserError ? e.message : 'The MP4 couldn’t be made. Try again, or use Chrome or Edge.';
+    } finally {
+      btns.forEach((b) => { b.disabled = false; });
+    }
+  }
+
+  /* ---------- Rendering ---------- */
+  const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>';
+  const PAUSE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4.5" height="14" rx="1.2"/><rect x="13.5" y="5" width="4.5" height="14" rx="1.2"/></svg>';
+
+  function renderPlay() {
+    $('#playBtn').innerHTML = playing ? PAUSE_ICON : PLAY_ICON;
+    $('#playBtn').setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  }
+
+  function renderParts() {
+    $('#parts').innerHTML = score.parts.map((ns, i) => {
+      const lo = ns.length ? noteName(Math.min(...ns.map((n) => n.midi)) + state.transpose) : '';
+      const hi = ns.length ? noteName(Math.max(...ns.map((n) => n.midi)) + state.transpose) : '';
+      return `<button type="button" class="part" data-i="${i}" aria-pressed="${state.sel[i]}">
+        <span class="nm">${NAMES[i]}</span><span class="rg">${ns.length ? `${lo} to ${hi}` : 'No notes found'}</span></button>`;
+    }).join('');
+  }
+
+  function renderModes() {
+    const custom = anySel() && !presetMatches();
+    document.querySelectorAll('#modes button').forEach((b) => {
+      b.disabled = !anySel() && b.dataset.mode !== 'all';
+      const active = !anySel() ? b.dataset.mode === 'all' : !custom && b.dataset.mode === state.mode;
+      b.setAttribute('aria-pressed', active);
+    });
+  }
+
+  function presetMatches() {
+    if (state.solo.some(Boolean) || state.mute.some(Boolean)) return false;
+    const want = presetVolumes();
+    return state.vol.every((v, i) => v === want[i]);
+  }
+
+  function renderMixer() {
+    const colors = ['var(--sop)', 'var(--alt)', 'var(--ten)', 'var(--bas)'];
+    $('#mixer').innerHTML = NAMES.map((n, i) => `
+      <div class="mixrow">
+        <span class="nm"><span class="dot" style="background:${colors[i]}"></span>${n}</span>
+        <input type="range" min="0" max="100" value="${state.vol[i]}" data-vol="${i}" aria-label="${n} volume">
+        <button type="button" class="tog" data-mute="${i}" aria-pressed="${state.mute[i]}" aria-label="Mute ${n}">Mute</button>
+        <button type="button" class="tog" data-solo="${i}" aria-pressed="${state.solo[i]}" aria-label="Solo ${n}">Solo</button>
+      </div>`).join('');
+  }
+
+  function keyLabel(shift) {
+    if (!score.keySig) return '';
+    const { fifths, mode } = score.keySig;
+    let pc = (((fifths * 7) % 12) + 12) % 12;
+    if (mode === 'minor') pc = (pc + 9) % 12;
+    return `${PC[(pc + shift + 120) % 12]} ${mode === 'minor' ? 'minor' : 'major'}`;
+  }
+
+  function renderTranspose() {
+    const t = state.transpose;
+    $('#tVal').textContent = t === 0 ? 'Original key' : `${t > 0 ? 'Up' : 'Down'} ${Math.abs(t)} half step${Math.abs(t) > 1 ? 's' : ''}`;
+    $('#keyVal').textContent = keyLabel(t);
+    renderParts();
+  }
+
+  function renderAll() {
+    $('#title').textContent = score.title;
+    renderLayout();
+    const k = keyLabel(0);
+    $('#meta').textContent = `${score.measures.length} measures${k ? `, ${k}` : ''}`;
+    $('#speed').value = state.speed;
+    const opts = score.measures.map((m, i) => `<option value="${i}">${m.number}</option>`).join('');
+    $('#loopFrom').innerHTML = opts; $('#loopTo').innerHTML = opts;
+    $('#loopOn').checked = state.loop;
+    renderParts(); renderModes(); renderMixer(); renderTranspose(); renderPlay(); applySpeed(); applyLoop();
+    const w = $('#warnings');
+    if (score.bad.length) {
+      const nums = score.bad.map((i) => score.measures[i].number);
+      const list = nums.length === 1 ? nums[0] : `${nums.slice(0, -1).join(', ')} and ${nums[nums.length - 1]}`;
+      w.innerHTML = `<div class="warn">Measure${nums.length > 1 ? 's' : ''} ${list} may have been read wrong: the note lengths don't add up. Compare ${nums.length > 1 ? 'them' : 'it'} with the printed score.</div>`;
+    } else w.innerHTML = '';
+  }
+
+  function tick() {
+    if (score) {
+      const q = T.ticks / PPQ;
+      if (playing && !state.loop && q >= score.total) { T.stop(); releaseAll(); playing = false; renderPlay(); }
+      const qq = T.ticks / PPQ;
+      let idx = 0;
+      for (let i = 0; i < score.measures.length; i++) if (score.measures[i].start <= qq + 1e-6) idx = i; else break;
+      $('#where').textContent = `Measure ${score.measures[idx].number} of ${score.measures[score.measures.length - 1].number}`;
+      const pct = Math.min(100, (qq / score.total) * 100);
+      $('#fill').style.width = `${pct}%`;
+      $('#bar').setAttribute('aria-valuenow', Math.round(pct));
+    }
+    requestAnimationFrame(tick);
+  }
+
+  /* ---------- Demo score (an original short chorale, hymnal layout) ---------- */
+  function demoXML() {
+    // [Soprano, Alto, Tenor, Bass, beats]
+    const chords = [
+      [64, 60, 55, 48, 1], [65, 60, 57, 53, 1], [67, 62, 59, 55, 1], [64, 60, 55, 48, 1],
+      [69, 64, 60, 57, 1], [67, 64, 60, 52, 1], [65, 62, 57, 50, 1], [67, 67, 59, 55, 1],
+      [72, 64, 55, 48, 1], [71, 62, 55, 43, 1], [69, 65, 60, 53, 1], [67, 64, 60, 52, 1],
+      [65, 62, 57, 50, 1], [62, 59, 55, 43, 1], [60, 55, 52, 48, 2],
+    ];
+    const SN = ['C', 'C', 'D', 'D', 'E', 'F', 'F', 'G', 'G', 'A', 'A', 'B'];
+    const AL = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0];
+    const TYPE = { 1: 'quarter', 2: 'half', 4: 'whole' };
+    const n = (m, d, staff, stem, isChord) => `<note>${isChord ? '<chord/>' : ''}<pitch><step>${SN[m % 12]}</step>${AL[m % 12] ? '<alter>1</alter>' : ''}<octave>${Math.floor(m / 12) - 1}</octave></pitch><duration>${d}</duration><voice>${staff === 1 ? 1 : 5}</voice><type>${TYPE[d]}</type><stem>${stem}</stem><staff>${staff}</staff></note>`;
+    const bars = []; let cur = [], beats = 0;
+    for (const c of chords) { cur.push(c); beats += c[4]; if (beats >= 4) { bars.push(cur); cur = []; beats = 0; } }
+    const body = bars.map((bar, bi) => {
+      let x = `<measure number="${bi + 1}">`;
+      if (bi === 0) x += '<attributes><divisions>1</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><staves>2</staves><clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef></attributes><direction placement="above"><direction-type><words>Moderately</words></direction-type><sound tempo="80"/></direction>';
+      for (const [s, a, , , d] of bar) x += n(s, d, 1, 'up', false) + (a !== s ? n(a, d, 1, 'up', true) : '');
+      x += '<backup><duration>4</duration></backup>';
+      for (const [, , t, b, d] of bar) x += n(t, d, 2, 'up', false) + (b !== t ? n(b, d, 2, 'up', true) : '');
+      return x + '</measure>';
+    }).join('');
+    return `<?xml version="1.0" encoding="UTF-8"?><score-partwise version="3.1"><work><work-title>Demo chorale</work-title></work><part-list><score-part id="P1"><part-name>Choir</part-name></score-part></part-list><part id="P1">${body}</part></score-partwise>`;
+  }
+
+  /* ---------- Events ---------- */
+  $('#file').addEventListener('change', (e) => { handleFile(e.target.files[0]); e.target.value = ''; });
+  $('#fileLabel').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#file').click(); } });
+  $('#demoBtn').addEventListener('click', () => { try { load(demoXML(), 'Demo chorale'); } catch (e) { console.error(e); showStatus("The demo couldn't be loaded.", 'err'); } });
+
+  const panel = $('#loadPanel');
+  ['dragenter', 'dragover'].forEach((t) => panel.addEventListener(t, (e) => { e.preventDefault(); panel.classList.add('dragging'); }));
+  ['dragleave', 'drop'].forEach((t) => panel.addEventListener(t, (e) => { e.preventDefault(); panel.classList.remove('dragging'); }));
+  panel.addEventListener('drop', (e) => handleFile(e.dataTransfer.files[0]));
+
+  $('#parts').addEventListener('click', (e) => {
+    const b = e.target.closest('.part'); if (!b) return;
+    const i = +b.dataset.i;
+    state.sel[i] = !state.sel[i];
+    if (anySel() && state.mode === 'all') state.mode = 'solo';
+    renderParts(); applyPreset();
+  });
+  $('#modes').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b || b.disabled) return;
+    state.mode = b.dataset.mode; applyPreset();
+  });
+  $('#mixer').addEventListener('input', (e) => {
+    const i = e.target.dataset.vol; if (i == null) return;
+    state.vol[+i] = +e.target.value;
+    const ch = channels[+i];
+    ch.mute = state.mute[+i] || state.vol[+i] === 0;
+    ch.volume.value = 20 * Math.log10(Math.max(state.vol[+i], 1) / 100);
+    renderModes();
+  });
+  $('#mixer').addEventListener('click', (e) => {
+    const m = e.target.dataset.mute, s = e.target.dataset.solo;
+    if (m != null) state.mute[+m] = !state.mute[+m];
+    else if (s != null) state.solo[+s] = !state.solo[+s];
+    else return;
+    applyMix();
+  });
+
+  $('#layoutRows').addEventListener('change', (e) => {
+    const i = e.target.dataset.part; if (i == null) return;
+    const [staff, which] = e.target.value.split(':');
+    score.mapping[+i] = { staff: +staff, which };
+    const wasPlaying = playing;
+    const ticks = T.ticks;
+    applyMapping(); buildAudio(); renderParts();
+    if (wasPlaying) { T.start(Tone.now() + 0.05, `${ticks}i`); playing = true; } else T.ticks = ticks;
+    renderPlay();
+  });
+  $('#saveBtns').addEventListener('click', (e) => { const b = e.target.closest('.savebtn'); if (b && !b.disabled) saveMp4(b.dataset.i); });
+  $('#playBtn').addEventListener('click', togglePlay);
+  $('#stopBtn').addEventListener('click', stopAll);
+  const bar = $('#bar');
+  const barSeek = (clientX) => {
+    if (!score) return;
+    const r = bar.getBoundingClientRect();
+    const f = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+    let q = f * score.total;
+    let idx = 0; score.measures.forEach((m, i) => { if (m.start <= q) idx = i; });
+    seek(Math.round(score.measures[idx].start * PPQ)); // snap to the start of the measure
+  };
+  bar.addEventListener('pointerdown', (e) => barSeek(e.clientX));
+  bar.addEventListener('keydown', (e) => {
+    if (!score || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    e.preventDefault();
+    const q = T.ticks / PPQ; let idx = 0;
+    score.measures.forEach((m, i) => { if (m.start <= q + 1e-6) idx = i; });
+    idx = Math.min(score.measures.length - 1, Math.max(0, idx + (e.key === 'ArrowRight' ? 1 : -1)));
+    seek(Math.round(score.measures[idx].start * PPQ));
+  });
+
+  $('#speed').addEventListener('input', (e) => { state.speed = +e.target.value; applySpeed(); });
+  $('#tDown').addEventListener('click', () => { state.transpose = Math.max(-12, state.transpose - 1); renderTranspose(); });
+  $('#tUp').addEventListener('click', () => { state.transpose = Math.min(12, state.transpose + 1); renderTranspose(); });
+  $('#loopOn').addEventListener('change', (e) => { state.loop = e.target.checked; applyLoop(); });
+  $('#loopFrom').addEventListener('change', (e) => { state.loopFrom = +e.target.value; if (state.loopTo < state.loopFrom) state.loopTo = state.loopFrom; applyLoop(); });
+  $('#loopTo').addEventListener('change', (e) => { state.loopTo = +e.target.value; if (state.loopFrom > state.loopTo) state.loopFrom = state.loopTo; applyLoop(); });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space' || !score) return;
+    const tag = document.activeElement?.tagName;
+    if (['INPUT', 'SELECT', 'BUTTON', 'TEXTAREA', 'SUMMARY'].includes(tag) || document.activeElement?.classList.contains('btn')) return;
+    e.preventDefault(); togglePlay();
+  });
+
+  renderPlay();
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
