@@ -171,7 +171,8 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
     <p class="hint">Use a MusicXML file (.musicxml, .xml or .mxl). MuseScore and most notation apps can export one. You can also drag a file onto this box.</p>
     <div class="row">
       <label class="btn primary" for="file" tabindex="0" id="fileLabel">Choose a file</label>
-      <input type="file" id="file" accept=".musicxml,.xml,.mxl,.pdf,.mid,.midi" hidden>
+      <!-- No accept filter: phones don't recognise .mxl and grey those files out. readFile checks the type instead. -->
+      <input type="file" id="file" hidden>
       <button class="btn" id="demoBtn" type="button">Try the demo</button>
     </div>
     <p id="status" class="status" role="status" hidden></p>
@@ -501,7 +502,9 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
     const name = file.name.toLowerCase();
     if (name.endsWith('.pdf')) throw new UserError("PDFs can't be read here yet. Run the score-reading script first and load the .mxl file it creates, or open the score in MuseScore and export it as MusicXML.");
     if (name.endsWith('.mid') || name.endsWith('.midi')) throw new UserError("MIDI files aren't supported yet. Export the score as MusicXML instead.");
-    if (name.endsWith('.mxl')) {
+    // .mxl is a zip; check the "PK" signature too, since phones sometimes rename it or drop the extension.
+    const sig = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+    if (name.endsWith('.mxl') || (sig[0] === 0x50 && sig[1] === 0x4B)) {
       let zip;
       try { zip = await JSZip.loadAsync(file); } catch { throw new UserError("This .mxl file couldn't be opened. Export it again from your notation app."); }
       let path = null;
