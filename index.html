@@ -153,6 +153,18 @@ details.mixer summary { cursor: pointer; font-weight: 700; min-height: 40px; dis
 .savebtn:disabled { opacity: 0.55; cursor: progress; }
 .savebtn[data-i="0"] { --c: var(--sop); } .savebtn[data-i="1"] { --c: var(--alt); }
 .savebtn[data-i="2"] { --c: var(--ten); } .savebtn[data-i="3"] { --c: var(--bas); }
+.sheet { margin-top: 22px; }
+.sheethead { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.sheethead h3 { margin: 0; }
+.viewer { position: relative; max-height: 65vh; overflow: auto; overscroll-behavior: contain; margin-top: 8px; padding: 8px; display: grid; gap: 8px;
+  border: 1.5px solid var(--line); border-radius: 12px; background: var(--line); }
+.viewer:empty { display: none; }
+.page { position: relative; background: #fff; cursor: pointer; }
+.page img { display: block; width: 100%; height: auto; }
+.mbox { position: absolute; pointer-events: none; border: 2px solid var(--accent); border-radius: 6px; background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.cursor { position: absolute; pointer-events: none; width: 3px; margin-left: -1.5px; border-radius: 2px; background: var(--accent); }
+.addpdf { margin-top: 22px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.addpdf .small { margin: 0; }
 .warn { background: var(--warn-bg); color: var(--warn-ink); border-radius: 10px; padding: 12px 14px; margin-top: 18px; font-size: 0.95rem; }
 footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
 @media (prefers-reduced-motion: no-preference) { .bar .fill { transition: width 0.08s linear; } }
@@ -168,11 +180,11 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
 
   <section class="panel" id="loadPanel">
     <h2>Load a score</h2>
-    <p class="hint">Use a MusicXML file (.musicxml, .xml or .mxl). MuseScore and most notation apps can export one. You can also drag a file onto this box.</p>
+    <p class="hint">Use a MusicXML file (.mxl, .musicxml or .xml) from Audiveris, MuseScore or another notation app. To follow along on the printed music, pick the PDF too; you can choose both at once. You can also drag files onto this box.</p>
     <div class="row">
-      <label class="btn primary" for="file" tabindex="0" id="fileLabel">Choose a file</label>
+      <label class="btn primary" for="file" tabindex="0" id="fileLabel">Choose files</label>
       <!-- No accept filter: phones don't recognise .mxl and grey those files out. readFile checks the type instead. -->
-      <input type="file" id="file" hidden>
+      <input type="file" id="file" multiple hidden>
       <button class="btn" id="demoBtn" type="button">Try the demo</button>
     </div>
     <p id="status" class="status" role="status" hidden></p>
@@ -213,6 +225,21 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
       </div>
     </div>
     <p class="small">No sound on an iPhone? Turn off silent mode.</p>
+
+    <div class="addpdf" id="addPdfRow">
+      <button class="btn" id="addPdfBtn" type="button">Add the PDF</button>
+      <p class="small">Add the sheet music PDF to see which measure and note are playing.</p>
+      <input type="file" id="pdfFile" accept=".pdf,application/pdf" hidden>
+    </div>
+    <section class="sheet" id="sheet" hidden>
+      <div class="sheethead">
+        <h3>Sheet music</h3>
+        <label class="check"><input type="checkbox" id="followOn" checked> Follow along</label>
+      </div>
+      <div class="loopsel" id="offsetRow" hidden><label for="pageOffset">Music starts on PDF page</label><select id="pageOffset"></select></div>
+      <p class="small" id="sheetNote" role="status"></p>
+      <div class="viewer" id="viewer"></div>
+    </section>
 
     <div class="tools">
       <div class="tool">
@@ -290,7 +317,7 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
     if (root.nodeName !== 'score-partwise') throw new UserError("This file doesn't contain a MusicXML score.");
 
     const titleEl = root.querySelector('work > work-title') || root.querySelector('movement-title');
-    const notes = []; const bad = new Set();
+    const notes = []; const bad = new Set(); const anchors = [];
     let measures = null, bpm = null, keySig = null;
     const partNames = {};
     root.querySelectorAll('part-list > score-part').forEach((sp) => { partNames[sp.getAttribute('id')] = (child(sp, 'part-name')?.textContent || '').trim(); });
@@ -336,6 +363,8 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
             const isChord = !!child(el, 'chord');
             const start = isChord ? lastStart : cur;
             if (!isChord) { lastStart = cur; cur += d; maxPos = Math.max(maxPos, cur); }
+            const dx = parseFloat(el.getAttribute('default-x'));
+            if (Number.isFinite(dx)) anchors.push({ mi, start, dx });
             const p = child(el, 'pitch');
             if (!p || !child(p, 'step') || !child(p, 'octave')) continue;
             const midi = (parseInt(child(p, 'octave').textContent, 10) + 1) * 12
@@ -360,7 +389,99 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
     });
 
     if (!notes.length) throw new UserError('No notes were found in this file.');
-    return { title: titleEl ? titleEl.textContent.trim() : '', notes, measures, bpm: bpm || 90, keySig, staffInfo, bad: [...bad].sort((a, b) => a - b) };
+    const layout = readLayout(root, measures, anchors);
+    return { layout, title: titleEl ? titleEl.textContent.trim() : '', notes, measures, bpm: bpm || 90, keySig, staffInfo, bad: [...bad].sort((a, b) => a - b) };
+  }
+
+  /* ---------- Where each measure sits on the printed page ---------- */
+  // Uses the layout data notation apps and Audiveris write: page size, a <print> at each new system
+  // or page, staff gaps, measure widths and note positions. Positions are kept as fractions of the page.
+  const STAFF_H = 40; // a five-line staff is 40 tenths tall
+  function readLayout(root, measureList, anchors) {
+    const num = (el, sel) => { const e = el && el.querySelector(sel); const v = e ? parseFloat(e.textContent) : NaN; return Number.isFinite(v) ? v : null; };
+    const partEls = [...root.children].filter((e) => e.nodeName === 'part');
+    const mEls = partEls.map((p) => [...p.children].filter((e) => e.nodeName === 'measure'));
+    const staffCounts = partEls.map((p) => parseInt(p.querySelector('attributes > staves')?.textContent || '1', 10) || 1);
+    const defaults = child(root, 'defaults');
+    const pl = defaults && child(defaults, 'page-layout');
+    const pageW = num(pl, 'page-width'), pageH = num(pl, 'page-height');
+    const pm = pl && child(pl, 'page-margins');
+    const mg = { l: num(pm, 'left-margin') || 0, r: num(pm, 'right-margin') || 0, t: num(pm, 'top-margin') || 0, b: num(pm, 'bottom-margin') || 0 };
+    const dsl = defaults && child(defaults, 'system-layout');
+    const defStaffGap = num(defaults && child(defaults, 'staff-layout'), 'staff-distance') ?? 65;
+    // Audiveris measures systems from the corner of the scanned page rather than from the margins.
+    const audiveris = /audiveris/i.test(root.querySelector('identification encoding software')?.textContent || '');
+
+    const systems = [], measures = [];
+    let page = 0;
+    mEls[0].forEach((mEl, mi) => {
+      const pr = child(mEl, 'print');
+      const newPage = mi > 0 && pr?.getAttribute('new-page') === 'yes';
+      if (newPage) page++;
+      if (mi === 0 || newPage || pr?.getAttribute('new-system') === 'yes') {
+        const sl = pr && child(pr, 'system-layout');
+        const firstOnPage = mi === 0 || newPage;
+        const gaps = [];
+        partEls.forEach((_, pi) => {
+          const ppr = mEls[pi][mi] && child(mEls[pi][mi], 'print');
+          for (let st = 1; st <= staffCounts[pi]; st++) {
+            if (pi === 0 && st === 1) continue;
+            let d = null;
+            if (ppr) for (const c of ppr.children) if (c.nodeName === 'staff-layout' && +(c.getAttribute('number') || 1) === st) d = num(c, 'staff-distance');
+            gaps.push(d ?? defStaffGap);
+          }
+        });
+        systems.push({
+          page, firstOnPage, gaps, list: [],
+          left: num(sl, 'system-margins > left-margin') ?? num(dsl, 'system-margins > left-margin') ?? 0,
+          right: num(sl, 'system-margins > right-margin') ?? num(dsl, 'system-margins > right-margin') ?? 0,
+          dist: firstOnPage ? (num(sl, 'top-system-distance') ?? num(dsl, 'top-system-distance')) : (num(sl, 'system-distance') ?? num(dsl, 'system-distance')),
+        });
+      }
+      const w = parseFloat(mEl.getAttribute('width'));
+      measures.push({ sys: systems.length - 1, width: w > 0 ? w : null, anchors: [] });
+      systems[systems.length - 1].list.push(mi);
+    });
+    if (systems.length < 2 && !(pageW && pageH)) return null; // nothing to place measures with
+
+    // Measures and note positions as fractions (u) along their system.
+    const byMeasure = groupBy(anchors, (a) => a.mi);
+    for (const sys of systems) {
+      const allW = sys.list.every((mi) => measures[mi].width);
+      const total = allW ? sys.list.reduce((t, mi) => t + measures[mi].width, 0) : sys.list.length;
+      let cum = 0;
+      for (const mi of sys.list) {
+        const m = measures[mi], w = allW ? m.width : 1;
+        m.u0 = cum / total; m.u1 = (cum + w) / total;
+        if (allW && byMeasure.has(mi)) {
+          const onsets = groupBy(byMeasure.get(mi), (a) => a.start.toFixed(4));
+          m.anchors = [...onsets.values()].map((g) => ({
+            t: g[0].start, // 6 tenths moves from the notehead's left edge to its middle
+            u: Math.min(m.u1, Math.max(m.u0, (cum + Math.min(...g.map((a) => a.dx)) + 6) / total)),
+          })).sort((a, b) => a.t - b.t);
+        }
+        cum += w;
+      }
+    }
+
+    // Page positions worked out from the numbers alone. Staff detection in the PDF can refine these later.
+    const perPage = [];
+    for (const sys of systems) { sys.index = perPage[sys.page] || 0; perPage[sys.page] = sys.index + 1; }
+    if (pageW && pageH) {
+      const W = audiveris ? pageW - mg.l - mg.r : pageW, H = audiveris ? pageH - mg.t - mg.b : pageH;
+      const ox = audiveris ? 0 : mg.l, oy = audiveris ? 0 : mg.t, xr = audiveris ? W : pageW - mg.r;
+      let y = null;
+      for (const sys of systems) {
+        if (sys.dist == null || (!sys.firstOnPage && y == null)) { y = null; continue; }
+        y = sys.firstOnPage ? oy + sys.dist : y + sys.dist;
+        const staves = [{ top: y / H, bottom: (y + STAFF_H) / H }];
+        y += STAFF_H;
+        for (const g of sys.gaps) { y += g; staves.push({ top: y / H, bottom: (y + STAFF_H) / H }); y += STAFF_H; }
+        const geom = { x0: (ox + sys.left) / W, x1: (xr - sys.right) / W, staves };
+        if (geom.x0 >= 0 && geom.x1 <= 1.02 && geom.x1 > geom.x0 && staves[0].top >= 0 && staves[staves.length - 1].bottom <= 1.02) sys.geom = geom;
+      }
+    }
+    return { systems, measures, perPage, pages: perPage.length, staves: staffCounts.reduce((a, b) => a + b, 0) };
   }
 
   /* ---------- Splitting into S, A, T, B ---------- */
@@ -500,7 +621,6 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
   /* ---------- Loading ---------- */
   async function readFile(file) {
     const name = file.name.toLowerCase();
-    if (name.endsWith('.pdf')) throw new UserError("PDFs can't be read here yet. Run the score-reading script first and load the .mxl file it creates, or open the score in MuseScore and export it as MusicXML.");
     if (name.endsWith('.mid') || name.endsWith('.midi')) throw new UserError("MIDI files aren't supported yet. Export the score as MusicXML instead.");
     // .mxl is a zip; check the "PK" signature too, since phones sometimes rename it or drop the extension.
     const sig = new Uint8Array(await file.slice(0, 2).arrayBuffer());
@@ -532,19 +652,37 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
     buildAudio();
     renderAll();
     $('#practice').hidden = false;
+    resetSheet();
     showStatus(`Loaded “${score.title}”.`, 'ok');
     if (window.matchMedia('(max-width: 680px)').matches) $('#practice').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   async function handleFile(file) {
-    if (!file) return;
+    if (!file) return false;
     try {
       showStatus('Reading the score…', 'ok');
       load(await readFile(file), file.name.replace(/\.[^.]+$/, ''));
+      return true;
     } catch (e) {
       console.error(e);
       showStatus(e instanceof UserError ? e.message : "This score couldn't be read. Check that it's a MusicXML export of a four-part choir score.", 'err');
+      return false;
     }
+  }
+
+  async function isPdf(file) {
+    if (file.name.toLowerCase().endsWith('.pdf')) return true;
+    const b = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+    return String.fromCharCode(...b) === '%PDF';
+  }
+
+  // The score file and the PDF can come together, in either order, or one at a time.
+  async function handleFiles(files) {
+    const pdfs = [], others = [];
+    for (const f of files) ((await isPdf(f)) ? pdfs : others).push(f);
+    if (others.length && !(await handleFile(others[0]))) return;
+    if (pdfs.length) attachPdf(pdfs[0]);
+    else if (pendingPdf && score) { const f = pendingPdf; pendingPdf = null; attachPdf(f); }
   }
 
   /* ---------- Audio ---------- */
@@ -757,6 +895,194 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
     }
   }
 
+  /* ---------- Following along on the PDF ---------- */
+  const PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/';
+  const RENDER_W = 1400; // pixel width pages are drawn at, and the resolution staff lines are found at
+  const sheet = { pages: [], map: null, offset: 0, autoOffset: true, cur: -1, curAnchor: -2, token: 0, quietUntil: 0 };
+  const mbox = document.createElement('div'); mbox.className = 'mbox';
+  const cursorEl = document.createElement('div'); cursorEl.className = 'cursor';
+  let pdfjsP = null, pendingPdf = null;
+
+  function loadPdfJs() {
+    pdfjsP ||= new Promise((resolve, reject) => {
+      const sc = document.createElement('script');
+      sc.src = PDFJS + 'pdf.min.js';
+      sc.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js'; resolve(window.pdfjsLib); };
+      sc.onerror = () => { pdfjsP = null; reject(new UserError('The PDF viewer didn’t load. Check your internet connection and try again.')); };
+      document.head.appendChild(sc);
+    });
+    return pdfjsP;
+  }
+
+  // Five evenly spaced long horizontal lines make a staff. Returns staves top to bottom, as page fractions.
+  function findStaves(ctx, w, h) {
+    const d = ctx.getImageData(0, 0, w, h).data;
+    const minRun = w * 0.08, maxGap = 3;
+    const lines = [];
+    for (let y = 0; y < h; y++) {
+      let best = 0, bestL = 0, runL = -1, last = -1;
+      for (let x = 0, i = y * w * 4; x < w; x++, i += 4) {
+        if (d[i] + d[i + 1] + d[i + 2] >= 480) continue;
+        if (runL < 0 || x - last > maxGap + 1) { if (runL >= 0 && last - runL > best) { best = last - runL; bestL = runL; } runL = x; }
+        last = x;
+      }
+      if (runL >= 0 && last - runL > best) { best = last - runL; bestL = runL; }
+      if (best < minRun) continue;
+      const ln = lines[lines.length - 1];
+      if (ln && y - ln.y1 <= 1) { ln.y1 = y; ln.l = Math.min(ln.l, bestL); ln.r = Math.max(ln.r, bestL + best); }
+      else lines.push({ y0: y, y1: y, l: bestL, r: bestL + best });
+    }
+    const ys = lines.filter((ln) => ln.y1 - ln.y0 <= 8).map((ln) => ({ y: (ln.y0 + ln.y1) / 2, l: ln.l, r: ln.r }));
+    const staves = [];
+    for (let i = 0; i + 4 < ys.length;) {
+      const g = [1, 2, 3, 4].map((k) => ys[i + k].y - ys[i + k - 1].y);
+      const sg = [...g].sort((a, b) => a - b), med = (sg[1] + sg[2]) / 2;
+      if (med >= 4 && med <= 60 && g.every((x) => Math.abs(x - med) <= med * 0.25 + 1)) {
+        const five = ys.slice(i, i + 5);
+        staves.push({ top: five[0].y / h, bottom: five[4].y / h, l: Math.min(...five.map((f) => f.l)) / w, r: Math.max(...five.map((f) => f.r)) / w });
+        i += 5;
+      } else i++;
+    }
+    return staves;
+  }
+
+  function groupSystems(staves, n) {
+    if (!n || !staves.length || staves.length % n) return null;
+    const out = [];
+    for (let i = 0; i < staves.length; i += n) {
+      const s = staves.slice(i, i + n);
+      out.push({ x0: Math.min(...s.map((t) => t.l)), x1: Math.max(...s.map((t) => t.r)), staves: s.map((t) => ({ top: t.top, bottom: t.bottom })) });
+    }
+    return out;
+  }
+
+  function resetSheet() {
+    sheet.token++;
+    for (const pg of sheet.pages) URL.revokeObjectURL(pg.url);
+    sheet.pages = []; sheet.map = null; sheet.cur = -1; sheet.autoOffset = true;
+    mbox.remove(); cursorEl.remove();
+    $('#viewer').innerHTML = '';
+    $('#sheet').hidden = true; $('#offsetRow').hidden = true; $('#addPdfRow').hidden = false;
+  }
+
+  async function attachPdf(file) {
+    if (!score) { pendingPdf = file; showStatus('Got the PDF. Now choose the .mxl file that goes with it.', 'ok'); return; }
+    pendingPdf = null;
+    resetSheet();
+    const token = sheet.token;
+    $('#sheet').hidden = false; $('#addPdfRow').hidden = true;
+    const note = $('#sheetNote');
+    note.textContent = 'Opening the PDF…';
+    try {
+      const lib = await loadPdfJs();
+      const doc = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+      const n = score.layout ? score.layout.staves : 0;
+      for (let p = 1; p <= doc.numPages; p++) {
+        if (token !== sheet.token) { doc.destroy(); return; }
+        note.textContent = `Reading page ${p} of ${doc.numPages}…`;
+        const page = await doc.getPage(p);
+        const vp = page.getViewport({ scale: RENDER_W / page.getViewport({ scale: 1 }).width });
+        const c = document.createElement('canvas');
+        c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        const systems = groupSystems(findStaves(ctx, c.width, c.height), n);
+        // Keep a compressed image instead of the canvas: much lighter on phones with long scores.
+        const blob = await new Promise((r) => c.toBlob(r));
+        if (!blob) throw new Error('canvas toBlob failed');
+        const url = URL.createObjectURL(blob);
+        const el = document.createElement('div');
+        el.className = 'page'; el.dataset.p = p - 1;
+        el.innerHTML = `<img alt="Page ${p}" width="${c.width}" height="${c.height}">`;
+        el.firstChild.src = url;
+        $('#viewer').appendChild(el);
+        sheet.pages.push({ el, url, systems });
+        page.cleanup(); c.width = c.height = 0;
+      }
+      doc.destroy();
+      renderOffsets();
+      alignSheet();
+    } catch (e) {
+      if (token !== sheet.token) return;
+      console.error(e);
+      note.textContent = e instanceof UserError ? e.message
+        : e?.name === 'PasswordException' ? 'This PDF is password-protected. Save a copy without a password and try again.'
+          : 'This PDF couldn’t be opened. Try saving it again, or use a different copy.';
+    }
+  }
+
+  function renderOffsets() {
+    const L = score.layout, extra = L ? sheet.pages.length - L.pages : 0;
+    $('#offsetRow').hidden = extra <= 0;
+    if (extra > 0) $('#pageOffset').innerHTML = Array.from({ length: extra + 1 }, (_, i) => `<option value="${i}">${i + 1}</option>`).join('');
+  }
+
+  // Match each measure to a box on a PDF page: staff lines found in the PDF if they agree with the
+  // score's layout, otherwise the positions the score file gives.
+  function alignSheet() {
+    const L = score.layout, note = $('#sheetNote');
+    sheet.map = null; sheet.cur = -1; mbox.remove(); cursorEl.remove();
+    if (!L) { note.textContent = 'This score file doesn’t record where its measures sit on the page, so the music can’t be highlighted. You can still scroll through the PDF.'; return; }
+    const P = sheet.pages.length;
+    const fits = (off) => L.perPage.reduce((t, cnt, k) => t + (sheet.pages[k + off]?.systems?.length === cnt ? 1 : 0), 0);
+    if (sheet.autoOffset) {
+      let best = 0;
+      for (let off = 1; off <= P - L.pages; off++) if (fits(off) > fits(best)) best = off;
+      sheet.offset = best;
+    }
+    $('#pageOffset').value = sheet.offset;
+    const boxes = L.systems.map((sys) => {
+      const p = sys.page + sheet.offset, pg = sheet.pages[p];
+      if (!pg) return null;
+      if (pg.systems && pg.systems.length === L.perPage[sys.page]) return { page: p, ...pg.systems[sys.index] };
+      return sys.geom ? { page: p, ...sys.geom } : null;
+    });
+    sheet.map = L.measures.map((m) => {
+      const b = boxes[m.sys];
+      if (!b) return null;
+      const X = (u) => b.x0 + u * (b.x1 - b.x0);
+      const top = b.staves[0].top, bottom = b.staves[b.staves.length - 1].bottom, pad = (b.staves[0].bottom - top) * 0.6;
+      return { page: b.page, x0: X(m.u0), x1: X(m.u1), y0: top - pad, y1: bottom + pad, anchors: m.anchors.map((a) => ({ t: a.t, x: X(a.u) })) };
+    });
+    const placed = sheet.map.filter(Boolean).length;
+    note.textContent = !placed ? 'This PDF doesn’t seem to match the score file, so the music can’t be highlighted. Check that the .mxl was made from this PDF.'
+      : placed < sheet.map.length ? 'Some measures couldn’t be found on the page, so they won’t be highlighted. Tap a measure to jump there.'
+        : 'The box shows the measure that’s playing, and the line shows the note. Tap a measure to jump there.';
+  }
+
+  const pct = (v) => `${(v * 100).toFixed(3)}%`;
+  function updateSheet(idx, q) {
+    if (!sheet.map) return;
+    const m = sheet.map[idx];
+    if (!m) { mbox.remove(); cursorEl.remove(); sheet.cur = idx; return; }
+    const pageEl = sheet.pages[m.page].el;
+    if (idx !== sheet.cur) {
+      if (mbox.parentNode !== pageEl) pageEl.append(mbox, cursorEl);
+      Object.assign(mbox.style, { left: pct(m.x0), top: pct(m.y0), width: pct(m.x1 - m.x0), height: pct(m.y1 - m.y0) });
+      Object.assign(cursorEl.style, { top: pct(m.y0), height: pct(m.y1 - m.y0) });
+      sheet.cur = idx; sheet.curAnchor = -2;
+      followTo(m, pageEl);
+    }
+    let a = m.anchors.length ? 0 : -1;
+    for (let i = 1; i < m.anchors.length && m.anchors[i].t <= q + 1e-6; i++) a = i;
+    if (a !== sheet.curAnchor) {
+      sheet.curAnchor = a;
+      cursorEl.hidden = a < 0;
+      if (a >= 0) cursorEl.style.left = pct(m.anchors[a].x);
+    }
+  }
+
+  // Scroll the viewer to keep the playing measure in sight, unless the singer just scrolled it themselves.
+  function followTo(m, pageEl) {
+    if (!$('#followOn').checked || Date.now() < sheet.quietUntil) return;
+    const v = $('#viewer'), h = pageEl.clientHeight;
+    const top = pageEl.offsetTop + m.y0 * h, bottom = pageEl.offsetTop + m.y1 * h;
+    if (top >= v.scrollTop && bottom <= v.scrollTop + v.clientHeight) return;
+    const smooth = window.matchMedia('(prefers-reduced-motion: no-preference)').matches;
+    v.scrollTo({ top: Math.max(0, top - v.clientHeight * 0.2), behavior: smooth ? 'smooth' : 'auto' });
+  }
+
   /* ---------- Rendering ---------- */
   const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>';
   const PAUSE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4.5" height="14" rx="1.2"/><rect x="13.5" y="5" width="4.5" height="14" rx="1.2"/></svg>';
@@ -842,6 +1168,7 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
       let idx = 0;
       for (let i = 0; i < score.measures.length; i++) if (score.measures[i].start <= qq + 1e-6) idx = i; else break;
       $('#where').textContent = `Measure ${score.measures[idx].number} of ${score.measures[score.measures.length - 1].number}`;
+      updateSheet(idx, qq);
       const pct = Math.min(100, (qq / score.total) * 100);
       $('#fill').style.width = `${pct}%`;
       $('#bar').setAttribute('aria-valuenow', Math.round(pct));
@@ -876,14 +1203,27 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
   }
 
   /* ---------- Events ---------- */
-  $('#file').addEventListener('change', (e) => { handleFile(e.target.files[0]); e.target.value = ''; });
+  $('#file').addEventListener('change', (e) => { const fs = [...e.target.files]; e.target.value = ''; handleFiles(fs); });
+  $('#addPdfBtn').addEventListener('click', () => $('#pdfFile').click());
+  $('#pdfFile').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) attachPdf(f); });
+  $('#pageOffset').addEventListener('change', (e) => { sheet.offset = +e.target.value; sheet.autoOffset = false; alignSheet(); });
+  const viewer = $('#viewer');
+  ['wheel', 'touchmove'].forEach((t) => viewer.addEventListener(t, () => { sheet.quietUntil = Date.now() + 4000; }, { passive: true }));
+  viewer.addEventListener('click', (e) => {
+    const pg = e.target.closest('.page'); if (!pg || !sheet.map) return;
+    const r = pg.getBoundingClientRect(), fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height, p = +pg.dataset.p;
+    const mi = sheet.map.findIndex((m) => m && m.page === p && fx >= m.x0 && fx <= m.x1 && fy >= m.y0 && fy <= m.y1);
+    if (mi < 0) return;
+    sheet.quietUntil = 0;
+    seek(Math.round(score.measures[mi].start * PPQ));
+  });
   $('#fileLabel').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#file').click(); } });
   $('#demoBtn').addEventListener('click', () => { try { load(demoXML(), 'Demo chorale'); } catch (e) { console.error(e); showStatus("The demo couldn't be loaded.", 'err'); } });
 
   const panel = $('#loadPanel');
   ['dragenter', 'dragover'].forEach((t) => panel.addEventListener(t, (e) => { e.preventDefault(); panel.classList.add('dragging'); }));
   ['dragleave', 'drop'].forEach((t) => panel.addEventListener(t, (e) => { e.preventDefault(); panel.classList.remove('dragging'); }));
-  panel.addEventListener('drop', (e) => handleFile(e.dataTransfer.files[0]));
+  panel.addEventListener('drop', (e) => handleFiles([...e.dataTransfer.files]));
 
   $('#parts').addEventListener('click', (e) => {
     const b = e.target.closest('.part'); if (!b) return;
