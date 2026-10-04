@@ -439,29 +439,17 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
         });
       }
       const w = parseFloat(mEl.getAttribute('width'));
-      measures.push({ sys: systems.length - 1, width: w > 0 ? w : null, anchors: [] });
+      measures.push({ sys: systems.length - 1, width: w > 0 ? w : null, notes: [] });
       systems[systems.length - 1].list.push(mi);
     });
-    if (systems.length < 2 && !(pageW && pageH)) return null; // nothing to place measures with
+    const breaks = systems.length > 1;
+    if (!breaks && !(pageW && pageH) && !measures.every((m) => m.width)) return null; // nothing to place measures with
 
-    // Measures and note positions as fractions (u) along their system.
-    const byMeasure = groupBy(anchors, (a) => a.mi);
-    for (const sys of systems) {
-      const allW = sys.list.every((mi) => measures[mi].width);
-      const total = allW ? sys.list.reduce((t, mi) => t + measures[mi].width, 0) : sys.list.length;
-      let cum = 0;
-      for (const mi of sys.list) {
-        const m = measures[mi], w = allW ? m.width : 1;
-        m.u0 = cum / total; m.u1 = (cum + w) / total;
-        if (allW && byMeasure.has(mi)) {
-          const onsets = groupBy(byMeasure.get(mi), (a) => a.start.toFixed(4));
-          m.anchors = [...onsets.values()].map((g) => ({
-            t: g[0].start, // 6 tenths moves from the notehead's left edge to its middle
-            u: Math.min(m.u1, Math.max(m.u0, (cum + Math.min(...g.map((a) => a.dx)) + 6) / total)),
-          })).sort((a, b) => a.t - b.t);
-        }
-        cum += w;
-      }
+    // Where each chord or note starts across its measure, in tenths from the measure's left edge.
+    for (const [mi, g] of groupBy(anchors, (a) => a.mi)) {
+      measures[mi].notes = [...groupBy(g, (a) => a.start.toFixed(4)).values()]
+        .map((on) => ({ t: on[0].start, dx: Math.min(...on.map((a) => a.dx)) + 6 })) // +6: notehead middle, not its left edge
+        .sort((x, y) => x.t - y.t);
     }
 
     // Page positions worked out from the numbers alone. Staff detection in the PDF can refine these later.
@@ -481,7 +469,7 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
         if (geom.x0 >= 0 && geom.x1 <= 1.02 && geom.x1 > geom.x0 && staves[0].top >= 0 && staves[staves.length - 1].bottom <= 1.02) sys.geom = geom;
       }
     }
-    return { systems, measures, perPage, pages: perPage.length, staves: staffCounts.reduce((a, b) => a + b, 0) };
+    return { systems, measures, perPage, breaks, pages: perPage.length, staves: staffCounts.reduce((a, b) => a + b, 0) };
   }
 
   /* ---------- Splitting into S, A, T, B ---------- */
@@ -914,15 +902,17 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
     return pdfjsP;
   }
 
-  // Five evenly spaced long horizontal lines make a staff. Returns staves top to bottom, as page fractions.
-  function findStaves(ctx, w, h) {
+  // Five evenly spaced long horizontal lines make a staff; staves joined by the line at the left
+  // edge of a system belong together. Returns staves and systems top to bottom, as page fractions.
+  function findSystems(ctx, w, h, n) {
     const d = ctx.getImageData(0, 0, w, h).data;
+    const dark = (x, y) => { const i = (y * w + x) * 4; return d[i] + d[i + 1] + d[i + 2] < 480; };
     const minRun = w * 0.08, maxGap = 3;
     const lines = [];
     for (let y = 0; y < h; y++) {
       let best = 0, bestL = 0, runL = -1, last = -1;
-      for (let x = 0, i = y * w * 4; x < w; x++, i += 4) {
-        if (d[i] + d[i + 1] + d[i + 2] >= 480) continue;
+      for (let x = 0; x < w; x++) {
+        if (!dark(x, y)) continue;
         if (runL < 0 || x - last > maxGap + 1) { if (runL >= 0 && last - runL > best) { best = last - runL; bestL = runL; } runL = x; }
         last = x;
       }
@@ -939,21 +929,32 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
       const sg = [...g].sort((a, b) => a - b), med = (sg[1] + sg[2]) / 2;
       if (med >= 4 && med <= 60 && g.every((x) => Math.abs(x - med) <= med * 0.25 + 1)) {
         const five = ys.slice(i, i + 5);
-        staves.push({ top: five[0].y / h, bottom: five[4].y / h, l: Math.min(...five.map((f) => f.l)) / w, r: Math.max(...five.map((f) => f.r)) / w });
+        staves.push({ top: five[0].y, bottom: five[4].y, l: Math.min(...five.map((f) => f.l)), r: Math.max(...five.map((f) => f.r)), sp: med });
         i += 5;
       } else i++;
     }
-    return staves;
-  }
-
-  function groupSystems(staves, n) {
-    if (!n || !staves.length || staves.length % n) return null;
-    const out = [];
-    for (let i = 0; i < staves.length; i += n) {
-      const s = staves.slice(i, i + n);
-      out.push({ x0: Math.min(...s.map((t) => t.l)), x1: Math.max(...s.map((t) => t.r)), staves: s.map((t) => ({ top: t.top, bottom: t.bottom })) });
+    const joined = (a, b) => {
+      if (Math.abs(a.l - b.l) > 6) return false;
+      const x0 = Math.max(0, Math.min(a.l, b.l) - 3), x1 = Math.min(w - 1, x0 + 6);
+      let hit = 0, rows = 0;
+      for (let y = Math.ceil(a.bottom) + 2; y < b.top - 1; y++, rows++) {
+        for (let x = x0; x <= x1; x++) if (dark(x, y)) { hit++; break; }
+      }
+      return rows > 0 && hit / rows >= 0.9;
+    };
+    let groups = [];
+    staves.forEach((st, i) => { if (i && joined(staves[i - 1], st)) groups[groups.length - 1].push(st); else groups.push([st]); });
+    if (n > 1 && groups.every((g) => g.length === 1)) { // no joining lines drawn: count staves instead
+      groups = [];
+      if (staves.length % n === 0) for (let i = 0; i < staves.length; i += n) groups.push(staves.slice(i, i + n));
     }
-    return out;
+    return {
+      staves: staves.map((t) => ({ top: t.top / h, bottom: t.bottom / h })),
+      systems: groups.length ? groups.map((g) => ({
+        x0: Math.min(...g.map((t) => t.l)) / w, x1: Math.max(...g.map((t) => t.r)) / w,
+        staves: g.map((t) => ({ top: t.top / h, bottom: t.bottom / h })), sp: g.reduce((a, t) => a + t.sp, 0) / g.length,
+      })) : null,
+    };
   }
 
   function resetSheet() {
@@ -987,7 +988,7 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
         const ctx = c.getContext('2d', { willReadFrequently: true });
         ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
         await page.render({ canvasContext: ctx, viewport: vp }).promise;
-        const systems = groupSystems(findStaves(ctx, c.width, c.height), n);
+        const { systems, staves } = findSystems(ctx, c.width, c.height, n);
         // Keep a compressed image instead of the canvas: much lighter on phones with long scores.
         const blob = await new Promise((r) => c.toBlob(r));
         if (!blob) throw new Error('canvas toBlob failed');
@@ -997,7 +998,7 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
         el.innerHTML = `<img alt="Page ${p}" width="${c.width}" height="${c.height}">`;
         el.firstChild.src = url;
         $('#viewer').appendChild(el);
-        sheet.pages.push({ el, url, systems });
+        sheet.pages.push({ el, url, systems, staves });
         page.cleanup(); c.width = c.height = 0;
       }
       doc.destroy();
@@ -1018,8 +1019,50 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
     if (extra > 0) $('#pageOffset').innerHTML = Array.from({ length: extra + 1 }, (_, i) => `<option value="${i}">${i + 1}</option>`).join('');
   }
 
-  // Match each measure to a box on a PDF page: staff lines found in the PDF if they agree with the
-  // score's layout, otherwise the positions the score file gives.
+  // Boxes for measures laid along one system, sized by their widths when the file gives them.
+  function placeRun(L, list, b, out) {
+    const allW = list.every((mi) => L.measures[mi].width);
+    const total = allW ? list.reduce((t, mi) => t + L.measures[mi].width, 0) : list.length;
+    const X = (u) => b.x0 + u * (b.x1 - b.x0);
+    const top = b.staves[0].top, bottom = b.staves[b.staves.length - 1].bottom, pad = (b.staves[0].bottom - top) * 0.6;
+    let cum = 0;
+    for (const mi of list) {
+      const m = L.measures[mi], w = allW ? m.width : 1, u0 = cum / total, u1 = (cum + w) / total;
+      out[mi] = {
+        page: b.page, x0: X(u0), x1: X(u1), y0: top - pad, y1: bottom + pad,
+        anchors: allW ? m.notes.map((a) => ({ t: a.t, x: X(Math.min(u1, Math.max(u0, (cum + a.dx) / total))) })) : [],
+      };
+      cum += w;
+    }
+  }
+
+  // Trust the score file's own positions only where no staves were found on the page, or where its
+  // staves sit on staves that were found. Otherwise the PDF is likely a different printing.
+  function geomAgrees(sys, pg) {
+    if (!sys.geom) return false;
+    if (!pg.staves.length) return true;
+    const near = sys.geom.staves.filter((g) => pg.staves.some((t) => Math.abs(t.top - g.top) < (g.bottom - g.top) * 0.5));
+    return near.length >= sys.geom.staves.length * 0.75;
+  }
+
+  // Fill the systems found in the PDF with measures, using measure widths against each system's width.
+  function fillByWidth(L, found) {
+    const out = [];
+    let mi = 0;
+    for (const s of found) {
+      if (mi >= L.measures.length) return null;
+      const cap = ((s.x1 - s.x0) * RENDER_W * 10) / s.sp; // the system's width in tenths of a staff space
+      const list = [mi];
+      let sum = L.measures[mi++].width;
+      while (mi < L.measures.length && sum + L.measures[mi].width <= cap * 1.04) { list.push(mi); sum += L.measures[mi++].width; }
+      placeRun(L, list, s, out);
+    }
+    return mi === L.measures.length ? out : null;
+  }
+
+  // Match each measure to a box on a PDF page. Tries, best first: systems found in the PDF page by
+  // page; the same systems in reading order; the PDF's systems filled by measure width; and the
+  // positions the score file gives.
   function alignSheet() {
     const L = score.layout, note = $('#sheetNote');
     sheet.map = null; sheet.cur = -1; mbox.remove(); cursorEl.remove();
@@ -1028,27 +1071,50 @@ footer { color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
     const fits = (off) => L.perPage.reduce((t, cnt, k) => t + (sheet.pages[k + off]?.systems?.length === cnt ? 1 : 0), 0);
     if (sheet.autoOffset) {
       let best = 0;
-      for (let off = 1; off <= P - L.pages; off++) if (fits(off) > fits(best)) best = off;
+      if (!L.breaks) best = Math.max(0, sheet.pages.findIndex((pg) => pg.systems?.length)); // first page with music
+      else for (let off = 1; off <= P - L.pages; off++) if (fits(off) > fits(best)) best = off;
       sheet.offset = best;
     }
     $('#pageOffset').value = sheet.offset;
-    const boxes = L.systems.map((sys) => {
-      const p = sys.page + sheet.offset, pg = sheet.pages[p];
-      if (!pg) return null;
-      if (pg.systems && pg.systems.length === L.perPage[sys.page]) return { page: p, ...pg.systems[sys.index] };
-      return sys.geom ? { page: p, ...sys.geom } : null;
-    });
-    sheet.map = L.measures.map((m) => {
-      const b = boxes[m.sys];
-      if (!b) return null;
-      const X = (u) => b.x0 + u * (b.x1 - b.x0);
-      const top = b.staves[0].top, bottom = b.staves[b.staves.length - 1].bottom, pad = (b.staves[0].bottom - top) * 0.6;
-      return { page: b.page, x0: X(m.u0), x1: X(m.u1), y0: top - pad, y1: bottom + pad, anchors: m.anchors.map((a) => ({ t: a.t, x: X(a.u) })) };
-    });
-    const placed = sheet.map.filter(Boolean).length;
-    note.textContent = !placed ? 'This PDF doesn’t seem to match the score file, so the music can’t be highlighted. Check that the .mxl was made from this PDF.'
-      : placed < sheet.map.length ? 'Some measures couldn’t be found on the page, so they won’t be highlighted. Tap a measure to jump there.'
+    const found = sheet.pages.slice(sheet.offset).flatMap((pg, k) => (pg.systems || []).map((s) => ({ page: k + sheet.offset, ...s })));
+    const tries = [];
+    if (L.breaks || L.systems[0].geom) {
+      const out = [];
+      let detected = true;
+      for (const sys of L.systems) {
+        const p = sys.page + sheet.offset, pg = sheet.pages[p];
+        if (!pg) { detected = false; continue; }
+        const match = pg.systems?.length === L.perPage[sys.page];
+        if (!match) detected = false;
+        const b = match ? pg.systems[sys.index] : geomAgrees(sys, pg) ? sys.geom : null;
+        if (b) placeRun(L, sys.list, { page: p, ...b }, out);
+      }
+      tries.push({ out, detected });
+    }
+    if (L.breaks && found.length === L.systems.length) {
+      const out = [];
+      L.systems.forEach((sys, i) => placeRun(L, sys.list, found[i], out));
+      tries.push({ out, detected: true });
+    }
+    if (found.length && L.measures.every((m) => m.width)) {
+      const out = fillByWidth(L, found);
+      if (out) tries.push({ out, detected: true });
+    }
+    const count = (o) => o.filter(Boolean).length, all = L.measures.length;
+    const pick = tries.find((t) => t.detected && count(t.out) === all) || tries.find((t) => count(t.out) === all)
+      || tries.reduce((a, t) => (count(t.out) > count(a.out) ? t : a), { out: [] });
+    sheet.map = L.measures.map((_, i) => pick.out[i] || null);
+    const placed = count(sheet.map);
+    if (!placed) {
+      const sizes = groupBy(found, (s) => s.staves.length);
+      const common = [...sizes.keys()].sort((a, b) => sizes.get(b).length - sizes.get(a).length)[0];
+      note.textContent = `This PDF and the score file don’t line up, so the music can’t be highlighted. In the PDF I found ${found.length} line${found.length === 1 ? '' : 's'} of music`
+        + (found.length ? ` with ${common === 1 ? '1 staff' : `${common} staves`} each` : '')
+        + `; the score file has ${L.systems.length} line${L.systems.length === 1 ? '' : 's'} with ${L.staves === 1 ? '1 staff' : `${L.staves} staves`} each. Check that the .mxl was made from this PDF.`;
+    } else {
+      note.textContent = placed < all ? 'Some measures couldn’t be found on the page, so they won’t be highlighted. Tap a measure to jump there.'
         : 'The box shows the measure that’s playing, and the line shows the note. Tap a measure to jump there.';
+    }
   }
 
   const pct = (v) => `${(v * 100).toFixed(3)}%`;
